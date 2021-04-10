@@ -1,0 +1,26 @@
+[package]
+name = "lagom-wasm"
+version = "0.1.0"
+authors = ["Peter Mandile <peterm1994@hotmail.com>"]
+edition = "2018"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+js-sys = "0.3.50"
+wasm-bindgen = "0.2.73"
+
+
+[dependencies.web-sys]
+version = "0.3.4"
+features = [
+    'Document',
+    'Element',
+    'HtmlCanvasElement',
+    'WebGlBuffer',
+    'WebGlRenderingContext',
+    'WebGlProgram',
+    'WebGlShader',
+    'Window',
+]
