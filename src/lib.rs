@@ -2,8 +2,8 @@ use std::rc::Rc;
 
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
-use web_sys::console;
 use web_sys::{HtmlImageElement, WebGl2RenderingContext, WebGlProgram, WebGlShader, WebGlTexture};
+use web_sys::console;
 
 #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
@@ -11,13 +11,13 @@ pub fn start() -> Result<(), JsValue> {
     let canvas = document.get_element_by_id("canvas").unwrap();
     let canvas: web_sys::HtmlCanvasElement = canvas.dyn_into::<web_sys::HtmlCanvasElement>()?;
 
-    let context: WebGl2RenderingContext = canvas
+    let gl: WebGl2RenderingContext = canvas
         .get_context("webgl2")?
         .unwrap()
         .dyn_into::<WebGl2RenderingContext>()?;
 
     let vert_shader = compile_shader(
-        &context,
+        &gl,
         WebGl2RenderingContext::VERTEX_SHADER,
         r#"
         attribute vec4 a_position;
@@ -34,7 +34,7 @@ pub fn start() -> Result<(), JsValue> {
         "#)?;
 
     let frag_shader = compile_shader(
-        &context,
+        &gl,
         WebGl2RenderingContext::FRAGMENT_SHADER,
         r#"
         precision mediump float;
@@ -48,13 +48,25 @@ pub fn start() -> Result<(), JsValue> {
         }
         "#)?;
 
-    let program = link_program(&context, &vert_shader, &frag_shader)?;
-    context.use_program(Some(&program));
+    let program = link_program(&gl, &vert_shader, &frag_shader)?;
+    gl.use_program(Some(&program));
 
     let vertices: [f32; 9] = [-0.7, -0.7, 0.0, 0.7, -0.7, 0.0, 0.0, 0.7, 0.0];
 
-    let buffer = context.create_buffer().ok_or("failed to create buffer")?;
-    context.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, Some(&buffer));
+    let tx = load_texture(&gl)?;
+
+
+    // Or we could do create_buffer()?
+    let buffer = gl.create_framebuffer().ok_or("failed to create buffer")?;
+    gl.bind_framebuffer(WebGl2RenderingContext::FRAMEBUFFER, Some(&buffer));
+
+    gl.framebuffer_texture_2d(WebGl2RenderingContext::FRAMEBUFFER,
+                              WebGl2RenderingContext::COLOR_ATTACHMENT0,
+                              WebGl2RenderingContext::TEXTURE_2D,
+                              Some(&tx),
+                              0);
+
+    console::log_1(&"what now".into());
 
     // Note that `Float32Array::view` is somewhat dangerous (hence the
     // `unsafe`!). This is creating a raw view into our module's
@@ -67,22 +79,21 @@ pub fn start() -> Result<(), JsValue> {
     unsafe {
         let vert_array = js_sys::Float32Array::view(&vertices);
 
-        context.buffer_data_with_array_buffer_view(
+        gl.buffer_data_with_array_buffer_view(
             WebGl2RenderingContext::ARRAY_BUFFER,
             &vert_array,
             WebGl2RenderingContext::STATIC_DRAW,
         );
     }
 
-    context.vertex_attrib_pointer_with_i32(0, 3, WebGl2RenderingContext::FLOAT, false, 0, 0);
-    context.enable_vertex_attrib_array(0);
-
-    context.clear_color(0.0, 0.40, 0.42, 1.0);
-    context.clear(WebGl2RenderingContext::COLOR_BUFFER_BIT);
-
-    load_texture(&context);
-    // This doesn't do anything
-    context.draw_arrays(
+    gl.vertex_attrib_pointer_with_i32(0, 3, WebGl2RenderingContext::FLOAT, false, 0, 0);
+    gl.enable_vertex_attrib_array(0);
+    gl.clear_color(0.0, 0.40, 0.42, 1.0);
+    gl.clear(WebGl2RenderingContext::COLOR_BUFFER_BIT);
+    //
+    //
+    // // This doesn't do anything
+    gl.draw_arrays(
         WebGl2RenderingContext::TRIANGLES,
         0,
         (vertices.len() / 3) as i32,
@@ -134,12 +145,10 @@ pub fn load_texture(context: &WebGl2RenderingContext) -> Result<Rc<WebGlTexture>
                 src_type,
                 &img,
             ) {
-                console::log_1(&JsValue::from("helloooo"));
                 console::log_1(&e);
                 return;
             }
 
-            // different from webgl1 where we need the pic to be power of 2
             gl.generate_mipmap(WebGl2RenderingContext::TEXTURE_2D);
         }) as Box<dyn FnMut()>);
         imgrc.set_onload(Some(a.as_ref().unchecked_ref()));
@@ -148,10 +157,12 @@ pub fn load_texture(context: &WebGl2RenderingContext) -> Result<Rc<WebGlTexture>
         // time but for now we want it to be a global handler so we use the
         // forget method to drop it without invalidating the closure. Note that
         // this is leaking memory in Rust, so this should be done judiciously!
+        // TODO fix this using something from the docs here:
+        //  https://rustwasm.github.io/wasm-bindgen/api/wasm_bindgen/closure/struct.Closure.html
         a.forget();
     }
 
-    imgrc.set_src("something.jpg");
+    imgrc.set_src("assets/bg_tileable.png");
 
     Ok(texture)
     // context.bind_texture(WebGl2RenderingContext::ARRAY_BUFFER, Some())
