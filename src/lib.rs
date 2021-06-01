@@ -84,12 +84,12 @@ pub fn start() -> Result<(), JsValue> {
     // As a result, after `Float32Array::view` we have to be very careful not to
     // do any memory allocations before it's dropped.
     // TODO try with just positions instead of the js array???
+    //  vertex_attrib_pointer_with_i32 should do the trick, might need to change some other things though.
     let positions: [f32; 12] = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
     let pos_array = unsafe { js_sys::Float32Array::view(&positions) };
 
     gl.buffer_data_with_array_buffer_view(WebGl2RenderingContext::ARRAY_BUFFER, &pos_array, WebGl2RenderingContext::STATIC_DRAW);
     gl.enable_vertex_attrib_array(pos_attribute);
-
     gl.vertex_attrib_pointer_with_i32(pos_attribute, 2, WebGl2RenderingContext::FLOAT, false, 0, 0);
 
     let tex_coord_buffer = gl.create_buffer().expect("create buffer failed.");
@@ -114,7 +114,8 @@ pub fn start() -> Result<(), JsValue> {
         // let tex_location = Rc::new(tex_location);
         // let vertex_array = Rc::new(vertex_array);
         *outer_f.borrow_mut() = Some(Closure::wrap(Box::new(move || {
-            gl.clear_color(0.0, 0.0, 0.0, 1.0);
+            gl.viewport(0, 0, 512, 512);
+            gl.clear_color(0.0, 0.0, 0.0, 0.0);
             gl.clear(WebGl2RenderingContext::COLOR_BUFFER_BIT | WebGl2RenderingContext::DEPTH_BUFFER_BIT);
             draw_image(&*tx, 256, 256, 0, 0, &gl, &program, &tex_location, &vertex_array, &matrix_location);
 
@@ -159,6 +160,7 @@ fn draw_image(texture: &WebGlTexture, width: usize, height: usize, x: usize, y: 
     let arr = array4(matrix).iter().flatten().cloned().collect::<Vec<f32>>();
 
     gl.uniform_matrix4fv_with_f32_array(Some(&matrix_location), false, &arr);
+    gl.draw_arrays(WebGl2RenderingContext::TRIANGLES, 0, 6);
 }
 
 
