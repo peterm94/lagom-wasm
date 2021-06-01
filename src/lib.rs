@@ -1,8 +1,14 @@
+use std::cell::RefCell;
 use std::rc::Rc;
+use std::thread::sleep;
+use std::time::Duration;
 
+use cgmath::{Matrix4, vec3, Vector3};
+use cgmath::conv::array4;
+use cgmath::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
-use web_sys::{HtmlImageElement, WebGl2RenderingContext, WebGlProgram, WebGlShader, WebGlTexture};
+use web_sys::{HtmlImageElement, WebGl2RenderingContext, WebGlProgram, WebGlShader, WebGlTexture, WebGlUniformLocation, WebGlVertexArrayObject};
 use web_sys::console;
 
 #[wasm_bindgen(start)]
@@ -19,13 +25,14 @@ pub fn start() -> Result<(), JsValue> {
     let vert_shader = compile_shader(
         &gl,
         WebGl2RenderingContext::VERTEX_SHADER,
-        r#"
-        attribute vec4 a_position;
-        attribute vec2 a_texcoord;
+        r#"#version 300 es
+
+        in vec4 a_position;
+        in vec2 a_texcoord;
 
         uniform mat4 u_matrix;
 
-        varying vec2 v_texcoord;
+        out vec2 v_texcoord;
 
         void main() {
            gl_Position = u_matrix * a_position;
@@ -36,37 +43,37 @@ pub fn start() -> Result<(), JsValue> {
     let frag_shader = compile_shader(
         &gl,
         WebGl2RenderingContext::FRAGMENT_SHADER,
-        r#"
-        precision mediump float;
+        r#"#version 300 es
 
-        varying vec2 v_texcoord;
+        precision highp float;
+
+        in vec2 v_texcoord;
 
         uniform sampler2D u_texture;
 
+        out vec4 outColor;
+
         void main() {
-           gl_FragColor = texture2D(u_texture, v_texcoord);
+           outColor = texture(u_texture, v_texcoord);
         }
         "#)?;
 
     let program = link_program(&gl, &vert_shader, &frag_shader)?;
     gl.use_program(Some(&program));
 
-    let vertices: [f32; 9] = [-0.7, -0.7, 0.0, 0.7, -0.7, 0.0, 0.0, 0.7, 0.0];
+    // look up position.
+    let pos_attribute = gl.get_attrib_location(&program, "a_position") as u32;
+    let tex_attribute = gl.get_attrib_location(&program, "a_texcoord") as u32;
 
-    let tx = load_texture(&gl)?;
+    // Uniforms
+    let matrix_location = gl.get_uniform_location(&program, "u_matrix").expect("no matrix");
+    let tex_location = gl.get_uniform_location(&program, "u_texture").expect("no texture");
 
+    let vertex_array = gl.create_vertex_array().expect("broken");
+    gl.bind_vertex_array(Some(&vertex_array));
 
-    // Or we could do create_buffer()?
-    let buffer = gl.create_framebuffer().ok_or("failed to create buffer")?;
-    gl.bind_framebuffer(WebGl2RenderingContext::FRAMEBUFFER, Some(&buffer));
-
-    gl.framebuffer_texture_2d(WebGl2RenderingContext::FRAMEBUFFER,
-                              WebGl2RenderingContext::COLOR_ATTACHMENT0,
-                              WebGl2RenderingContext::TEXTURE_2D,
-                              Some(&tx),
-                              0);
-
-    console::log_1(&"what now".into());
+    let position_buffer = gl.create_buffer().expect("create buffer failed");
+    gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, Some(&position_buffer));
 
     // Note that `Float32Array::view` is somewhat dangerous (hence the
     // `unsafe`!). This is creating a raw view into our module's
@@ -76,81 +83,124 @@ pub fn start() -> Result<(), JsValue> {
     //
     // As a result, after `Float32Array::view` we have to be very careful not to
     // do any memory allocations before it's dropped.
-    unsafe {
-        let vert_array = js_sys::Float32Array::view(&vertices);
+    // TODO try with just positions instead of the js array???
+    let positions: [f32; 12] = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+    let pos_array = unsafe { js_sys::Float32Array::view(&positions) };
 
-        gl.buffer_data_with_array_buffer_view(
-            WebGl2RenderingContext::ARRAY_BUFFER,
-            &vert_array,
-            WebGl2RenderingContext::STATIC_DRAW,
-        );
+    gl.buffer_data_with_array_buffer_view(WebGl2RenderingContext::ARRAY_BUFFER, &pos_array, WebGl2RenderingContext::STATIC_DRAW);
+    gl.enable_vertex_attrib_array(pos_attribute);
+
+    gl.vertex_attrib_pointer_with_i32(pos_attribute, 2, WebGl2RenderingContext::FLOAT, false, 0, 0);
+
+    let tex_coord_buffer = gl.create_buffer().expect("create buffer failed.");
+    gl.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, Some(&tex_coord_buffer));
+    let tex_coords: [f32; 12] = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+    let tex_array = unsafe { js_sys::Float32Array::view(&tex_coords) };
+    gl.buffer_data_with_array_buffer_view(WebGl2RenderingContext::ARRAY_BUFFER, &tex_array, WebGl2RenderingContext::STATIC_DRAW);
+    gl.enable_vertex_attrib_array(tex_attribute);
+    gl.vertex_attrib_pointer_with_i32(tex_attribute, 2, WebGl2RenderingContext::FLOAT, true, 0, 0);
+
+
+    let tx: Rc<WebGlTexture> = load_texture(&gl)?;
+
+    let f: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
+    let outer_f = f.clone();
+
+    let window = web_sys::window().unwrap();
+    if let Some(perf) = window.performance() {
+        let start = perf.now();
+        // let gl = Rc::new(gl.clone());
+        // let program = Rc::new(program.clone());
+        // let tex_location = Rc::new(tex_location);
+        // let vertex_array = Rc::new(vertex_array);
+        *outer_f.borrow_mut() = Some(Closure::wrap(Box::new(move || {
+            gl.clear_color(0.0, 0.0, 0.0, 1.0);
+            gl.clear(WebGl2RenderingContext::COLOR_BUFFER_BIT | WebGl2RenderingContext::DEPTH_BUFFER_BIT);
+            draw_image(&*tx, 256, 256, 0, 0, &gl, &program, &tex_location, &vertex_array, &matrix_location);
+
+            window.request_animation_frame(f.borrow().as_ref().unwrap().as_ref().unchecked_ref())
+                .expect("Wtf even is this");
+        }) as Box<dyn FnMut()>))
     }
 
-    gl.vertex_attrib_pointer_with_i32(0, 3, WebGl2RenderingContext::FLOAT, false, 0, 0);
-    gl.enable_vertex_attrib_array(0);
-    gl.clear_color(0.0, 0.40, 0.42, 1.0);
-    gl.clear(WebGl2RenderingContext::COLOR_BUFFER_BIT);
-    //
-    //
-    // // This doesn't do anything
-    gl.draw_arrays(
-        WebGl2RenderingContext::TRIANGLES,
-        0,
-        (vertices.len() / 3) as i32,
-    );
+    let window = web_sys::window().unwrap();
+    window.request_animation_frame(outer_f.borrow().as_ref().unwrap().as_ref().unchecked_ref())
+        .expect("more wtf");
+
+
     Ok(())
 }
 
-// https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Tutorial/Using_textures_in_WebGL
-pub fn load_texture(context: &WebGl2RenderingContext) -> Result<Rc<WebGlTexture>, JsValue> {
-    let texture: WebGlTexture = context.create_texture().unwrap();
-    context.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
+fn draw_image(texture: &WebGlTexture, width: usize, height: usize, x: usize, y: usize,
+              gl: &WebGl2RenderingContext, program: &WebGlProgram,
+              tex_location: &WebGlUniformLocation,
+              vertex_array: &WebGlVertexArrayObject,
+              matrix_location: &WebGlUniformLocation)
+{
+    gl.use_program(Some(&program));
+    gl.bind_vertex_array(Some(&vertex_array));
 
-    let level = 0;
-    let internal_format = WebGl2RenderingContext::RGBA;
-    let width = 1;
-    let height = 1;
-    let border = 0;
-    let src_format = WebGl2RenderingContext::RGBA;
-    let src_type = WebGl2RenderingContext::UNSIGNED_BYTE;
+    let texture_unit: i32 = 0;
+    gl.uniform1i(Some(tex_location), texture_unit);
+
+    gl.active_texture(WebGl2RenderingContext::TEXTURE0 + texture_unit as u32);
+    gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
+
+    // TODO canvas size.
+    let matrix: cgmath::Matrix4<f32> = cgmath::ortho(0_f32, 512_f32, 512_f32,
+                                                     0_f32, -1_f32, 1_f32);
+
+
+    let translation = cgmath::Matrix4::from_translation(vec3(x as f32, y as f32, 1.0));
+    let scale = cgmath::Matrix4::from_nonuniform_scale(width as f32, height as f32, 1.0);
+    let matrix: Matrix4<f32> = matrix * translation * scale;
+
+    // this clone is not ideal.
+    let arr = array4(matrix).iter().flatten().cloned().collect::<Vec<f32>>();
+
+    gl.uniform_matrix4fv_with_f32_array(Some(&matrix_location), false, &arr);
+}
+
+
+// https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Tutorial/Using_textures_in_WebGL
+pub fn load_texture(gl: &WebGl2RenderingContext) -> Result<Rc<WebGlTexture>, JsValue> {
+    let texture: WebGlTexture = gl.create_texture().unwrap();
+    gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
 
     // Placeholder pixel
     let pixel: [u8; 4] = [0, 0, 255, 255];
 
-    context.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
-        WebGl2RenderingContext::TEXTURE_2D, level, internal_format as i32,
-        width, height, border, src_format, src_type, Some(&pixel),
+    let rgba = WebGl2RenderingContext::RGBA;
+
+    gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
+        WebGl2RenderingContext::TEXTURE_2D, 0, rgba as i32,
+        1, 1, 0, rgba, WebGl2RenderingContext::UNSIGNED_BYTE, Some(&pixel),
     );
+
+    gl.tex_parameteri(WebGl2RenderingContext::TEXTURE_2D, WebGl2RenderingContext::TEXTURE_WRAP_S,
+                      WebGl2RenderingContext::CLAMP_TO_EDGE as i32);
+    gl.tex_parameteri(WebGl2RenderingContext::TEXTURE_2D, WebGl2RenderingContext::TEXTURE_WRAP_T,
+                      WebGl2RenderingContext::CLAMP_TO_EDGE as i32);
+
 
     // Load the image
     let img = HtmlImageElement::new().unwrap();
     img.set_cross_origin(Some(""));
 
     let imgrc = Rc::new(img);
-
     let texture = Rc::new(texture);
 
     {
-        let img = imgrc.clone();
+        let img: Rc<HtmlImageElement> = imgrc.clone();
         let texture = texture.clone();
-        let gl = Rc::new(context.clone());
+        let gl = Rc::new(gl.clone());
         let a = Closure::wrap(Box::new(move || {
             gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
-
-            if let Err(e) = gl.tex_image_2d_with_u32_and_u32_and_html_image_element(
-                WebGl2RenderingContext::TEXTURE_2D,
-                level,
-                internal_format as i32,
-                src_format,
-                src_type,
-                &img,
-            ) {
-                console::log_1(&e);
-                return;
-            }
-
+            gl.tex_image_2d_with_u32_and_u32_and_html_image_element(WebGl2RenderingContext::TEXTURE_2D, 0,
+                                                                    rgba as i32, rgba, WebGl2RenderingContext::UNSIGNED_BYTE, &img);
             gl.generate_mipmap(WebGl2RenderingContext::TEXTURE_2D);
         }) as Box<dyn FnMut()>);
+
         imgrc.set_onload(Some(a.as_ref().unchecked_ref()));
 
         // Normally we'd store the handle to later get dropped at an appropriate
@@ -161,26 +211,12 @@ pub fn load_texture(context: &WebGl2RenderingContext) -> Result<Rc<WebGlTexture>
         //  https://rustwasm.github.io/wasm-bindgen/api/wasm_bindgen/closure/struct.Closure.html
         a.forget();
     }
-
+    console::log_1(&"setting url".into());
     imgrc.set_src("assets/bg_tileable.png");
 
     Ok(texture)
-    // context.bind_texture(WebGl2RenderingContext::ARRAY_BUFFER, Some())
 }
 
-// pub fn draw_image(context: &mut WebGl2RenderingContext, texture: &WebGlTexture) {
-// context.bind_texture(WebGl2RenderingContext::ARRAY_BUFFER, Some(&texture));
-// context.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, position_buffer);
-// context.enable_vertex_attrib_array(position_location);
-// context.vertex_attrib_pointer_with_f64(position_location, 2, WebGl2RenderingContext::FLOAT,
-//                                        false, 0, 0);
-// context.bind_buffer(WebGl2RenderingContext::ARRAY_BUFFER, tex_coord_buffer);
-// context.enable_vertex_attrib_array(tex_coord_location);
-// context.vertex_attrib_pointer_with_f64(tex_coord_location, 2, WebGl2RenderingContext::FLOAT,
-//                                        false, 0, 0);
-
-// let matrix
-// }
 
 pub fn compile_shader(
     context: &WebGl2RenderingContext,
