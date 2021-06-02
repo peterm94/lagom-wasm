@@ -136,8 +136,6 @@ impl Renderer {
         //
         // As a result, after `Float32Array::view` we have to be very careful not to
         // do any memory allocations before it's dropped.
-        // TODO try with just positions instead of the js array???
-        //  vertex_attrib_pointer_with_i32 should do the trick, might need to change some other things though.
         let positions: [f32; 12] = [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0];
         let pos_array = unsafe { js_sys::Float32Array::view(&positions) };
 
@@ -191,6 +189,13 @@ impl Renderer {
         self.gl.draw_arrays(WebGl2RenderingContext::TRIANGLES, 0, 6);
     }
 
+    // TODO how can I write a test?
+    pub fn read_pixels(&self) -> Vec<u8> {
+        // TODO canvas size
+        let mut dest = vec![0u8; 512 * 512 * 4];
+        self.gl.read_pixels_with_opt_u8_array(0, 0, 512, 512, WebGl2RenderingContext::RGBA, WebGl2RenderingContext::UNSIGNED_BYTE, Some(&mut dest));
+        return dest;
+    }
 
     // https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Tutorial/Using_textures_in_WebGL
     pub fn load_texture(&self, source: &str) -> Result<Rc<WebGlTexture>, JsValue> {
