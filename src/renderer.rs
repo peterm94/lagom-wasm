@@ -172,7 +172,7 @@ impl Renderer {
         self.gl.clear(WebGl2RenderingContext::COLOR_BUFFER_BIT | WebGl2RenderingContext::DEPTH_BUFFER_BIT);
     }
 
-    pub fn draw_image(&self, texture: &Texture, x: usize, y: usize) {
+    pub fn draw_image(&self, texture: &Texture, x: u32, y: u32) {
 
         // Do I need these?
         self.gl.use_program(Some(&self.program));
