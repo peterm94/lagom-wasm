@@ -1,10 +1,8 @@
-use std::rc::Rc;
-
 use cgmath::Matrix4;
-use cgmath::prelude::*;
+use image::RgbaImage;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
-use web_sys::{console, HtmlImageElement, WebGl2RenderingContext, WebGlProgram, WebGlShader, WebGlTexture, WebGlUniformLocation, WebGlVertexArrayObject};
+use web_sys::{HtmlImageElement, WebGl2RenderingContext, WebGlProgram, WebGlShader, WebGlTexture, WebGlUniformLocation, WebGlVertexArrayObject};
 
 pub struct Renderer {
     gl: WebGl2RenderingContext,
@@ -12,6 +10,8 @@ pub struct Renderer {
     tex_location: WebGlUniformLocation,
     vertex_array: WebGlVertexArrayObject,
     matrix_location: WebGlUniformLocation,
+    canvas_height: i32,
+    canvas_width: i32,
 }
 
 
@@ -70,6 +70,10 @@ impl Renderer {
         let document = web_sys::window().unwrap().document().unwrap();
         let canvas = document.get_element_by_id(canvas_id).unwrap();
         let canvas: web_sys::HtmlCanvasElement = canvas.dyn_into::<web_sys::HtmlCanvasElement>()?;
+
+        let canvas_width = canvas.width();
+        let canvas_height = canvas.height();
+
         let gl: WebGl2RenderingContext = canvas
             .get_context("webgl2")?
             .unwrap()
@@ -151,18 +155,24 @@ impl Renderer {
         gl.enable_vertex_attrib_array(tex_attribute);
         gl.vertex_attrib_pointer_with_i32(tex_attribute, 2, WebGl2RenderingContext::FLOAT, true, 0, 0);
 
-        Ok(Self { gl, program, tex_location, vertex_array, matrix_location })
+        Ok(Self {
+            gl,
+            program,
+            tex_location,
+            vertex_array,
+            matrix_location,
+            canvas_width: canvas_width as i32,
+            canvas_height: canvas_height as i32,
+        })
     }
 
-    pub fn draw_frame(&self) {
-        self.gl.viewport(0, 0, 512, 512);
+    pub fn clear(&self) {
+        self.gl.viewport(0, 0, self.canvas_width, self.canvas_height);
         self.gl.clear_color(0.0, 0.0, 0.0, 0.0);
         self.gl.clear(WebGl2RenderingContext::COLOR_BUFFER_BIT | WebGl2RenderingContext::DEPTH_BUFFER_BIT);
-        // draw_image(&*tx, 256, 256, 0, 0, &gl, &program, &tex_location, &vertex_array, &matrix_location);
-        // draw_image(&*tx, 256, 256, 256, 256, &gl, &program, &tex_location, &vertex_array, &matrix_location);
     }
 
-    pub fn draw_image(&self, texture: &WebGlTexture, width: usize, height: usize, x: usize, y: usize) {
+    pub fn draw_image(&self, texture: &Texture, x: usize, y: usize) {
 
         // Do I need these?
         self.gl.use_program(Some(&self.program));
@@ -172,14 +182,13 @@ impl Renderer {
         self.gl.uniform1i(Some(&self.tex_location), texture_unit);
 
         self.gl.active_texture(WebGl2RenderingContext::TEXTURE0 + texture_unit as u32);
-        self.gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
+        self.gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture.tex));
 
-        // TODO canvas size.
-        let matrix: cgmath::Matrix4<f32> = cgmath::ortho(0_f32, 512_f32, 512_f32,
+        let matrix: cgmath::Matrix4<f32> = cgmath::ortho(0_f32, self.canvas_width as f32, self.canvas_height as f32,
                                                          0_f32, -1_f32, 1_f32);
 
         let translation = Matrix4::from_translation(cgmath::vec3(x as f32, y as f32, 1.0));
-        let scale = Matrix4::from_nonuniform_scale(width as f32, height as f32, 1.0);
+        let scale = Matrix4::from_nonuniform_scale(texture.width as f32, texture.height as f32, 1.0);
         let matrix: Matrix4<f32> = matrix * translation * scale;
 
         // this clone is not ideal, but I don't know what else I can do.
@@ -189,66 +198,94 @@ impl Renderer {
         self.gl.draw_arrays(WebGl2RenderingContext::TRIANGLES, 0, 6);
     }
 
-    // TODO how can I write a test?
+    // TODO how can I write a test? https://devjournal.akigi.com/february-2020/2020-02-16.html#the-webgl-renderer
     pub fn read_pixels(&self) -> Vec<u8> {
-        // TODO canvas size
-        let mut dest = vec![0u8; 512 * 512 * 4];
-        self.gl.read_pixels_with_opt_u8_array(0, 0, 512, 512, WebGl2RenderingContext::RGBA, WebGl2RenderingContext::UNSIGNED_BYTE, Some(&mut dest));
+        let mut dest = vec![0u8; (self.canvas_width * self.canvas_height * 4) as usize];
+        self.gl.read_pixels_with_opt_u8_array(0, 0, self.canvas_width, self.canvas_height,
+                                              WebGl2RenderingContext::RGBA, WebGl2RenderingContext::UNSIGNED_BYTE,
+                                              Some(&mut dest));
         return dest;
     }
 
-    // https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Tutorial/Using_textures_in_WebGL
-    pub fn load_texture(&self, source: &str) -> Result<Rc<WebGlTexture>, JsValue> {
+    pub fn load_texture(&self, source: RgbaImage) -> Texture {
+        let tx_width = source.width() as i32;
+        let tx_height = source.width() as i32;
+
+        let pixels = source.into_raw();
+
         let texture: WebGlTexture = self.gl.create_texture().unwrap();
         self.gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
-
-        // Placeholder pixel
-        let pixel: [u8; 4] = [0, 0, 255, 255];
 
         let rgba = WebGl2RenderingContext::RGBA;
 
         self.gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
             WebGl2RenderingContext::TEXTURE_2D, 0, rgba as i32,
-            1, 1, 0, rgba, WebGl2RenderingContext::UNSIGNED_BYTE, Some(&pixel),
+            tx_width, tx_height, 0, rgba, WebGl2RenderingContext::UNSIGNED_BYTE, Some(&pixels.as_slice()),
         );
 
-        self.gl.tex_parameteri(WebGl2RenderingContext::TEXTURE_2D, WebGl2RenderingContext::TEXTURE_WRAP_S,
-                               WebGl2RenderingContext::CLAMP_TO_EDGE as i32);
-        self.gl.tex_parameteri(WebGl2RenderingContext::TEXTURE_2D, WebGl2RenderingContext::TEXTURE_WRAP_T,
-                               WebGl2RenderingContext::CLAMP_TO_EDGE as i32);
+        self.gl.generate_mipmap(WebGl2RenderingContext::TEXTURE_2D);
 
-
-        // Load the image
-        let img = HtmlImageElement::new().unwrap();
-        img.set_cross_origin(Some(""));
-
-        let imgrc = Rc::new(img);
-        let texture = Rc::new(texture);
-
-        {
-            let img: Rc<HtmlImageElement> = imgrc.clone();
-            let texture = texture.clone();
-            let gl = Rc::new(self.gl.clone());
-            let a = Closure::wrap(Box::new(move || {
-                gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
-                gl.tex_image_2d_with_u32_and_u32_and_html_image_element(WebGl2RenderingContext::TEXTURE_2D, 0,
-                                                                        rgba as i32, rgba, WebGl2RenderingContext::UNSIGNED_BYTE, &img);
-                gl.generate_mipmap(WebGl2RenderingContext::TEXTURE_2D);
-            }) as Box<dyn FnMut()>);
-
-            imgrc.set_onload(Some(a.as_ref().unchecked_ref()));
-
-            // Normally we'd store the handle to later get dropped at an appropriate
-            // time but for now we want it to be a global handler so we use the
-            // forget method to drop it without invalidating the closure. Note that
-            // this is leaking memory in Rust, so this should be done judiciously!
-            // TODO fix this using something from the docs here:
-            //  https://rustwasm.github.io/wasm-bindgen/api/wasm_bindgen/closure/struct.Closure.html
-            a.forget();
-        }
-        console::log_1(&"setting url".into());
-        imgrc.set_src(source);
-
-        Ok(texture)
+        Texture { tex: texture, width: tx_width, height: tx_height }
     }
+
+    // // This is async! The texture will not be available immediately.
+    // // https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API/Tutorial/Using_textures_in_WebGL
+    // pub fn load_texture(&self, source: &str) -> Result<Rc<WebGlTexture>, JsValue> {
+    //     let texture: WebGlTexture = self.gl.create_texture().unwrap();
+    //     self.gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
+    //
+    //     // Placeholder pixel
+    //     let pixel: [u8; 4] = [0, 0, 255, 255];
+    //
+    //     let rgba = WebGl2RenderingContext::RGBA;
+    //
+    //     self.gl.tex_image_2d_with_i32_and_i32_and_i32_and_format_and_type_and_opt_u8_array(
+    //         WebGl2RenderingContext::TEXTURE_2D, 0, rgba as i32,
+    //         1, 1, 0, rgba, WebGl2RenderingContext::UNSIGNED_BYTE, Some(&pixel),
+    //     );
+    //
+    //     self.gl.tex_parameteri(WebGl2RenderingContext::TEXTURE_2D, WebGl2RenderingContext::TEXTURE_WRAP_S,
+    //                            WebGl2RenderingContext::CLAMP_TO_EDGE as i32);
+    //     self.gl.tex_parameteri(WebGl2RenderingContext::TEXTURE_2D, WebGl2RenderingContext::TEXTURE_WRAP_T,
+    //                            WebGl2RenderingContext::CLAMP_TO_EDGE as i32);
+    //
+    //
+    //     // Load the image
+    //     let img = HtmlImageElement::new().unwrap();
+    //     img.set_cross_origin(Some(""));
+    //
+    //     let imgrc = Rc::new(img);
+    //     let texture = Rc::new(texture);
+    //
+    //     {
+    //         let img: Rc<HtmlImageElement> = imgrc.clone();
+    //         let texture = texture.clone();
+    //         let gl = Rc::new(self.gl.clone());
+    //         let a = Closure::wrap(Box::new(move || {
+    //             gl.bind_texture(WebGl2RenderingContext::TEXTURE_2D, Some(&texture));
+    //             gl.tex_image_2d_with_u32_and_u32_and_html_image_element(WebGl2RenderingContext::TEXTURE_2D, 0,
+    //                                                                     rgba as i32, rgba, WebGl2RenderingContext::UNSIGNED_BYTE, &img);
+    //             gl.generate_mipmap(WebGl2RenderingContext::TEXTURE_2D);
+    //         }) as Box<dyn FnMut()>);
+    //
+    //         imgrc.set_onload(Some(a.as_ref().unchecked_ref()));
+    //
+    //         // Normally we'd store the handle to later get dropped at an appropriate
+    //         // time but for now we want it to be a global handler so we use the
+    //         // forget method to drop it without invalidating the closure. Note that
+    //         // this is leaking memory in Rust, so this should be done judiciously!
+    //         // TODO fix this using something from the docs here:
+    //         //  https://rustwasm.github.io/wasm-bindgen/api/wasm_bindgen/closure/struct.Closure.html
+    //         a.forget();
+    //     }
+    //     console::log_1(&"setting url".into());
+    //     imgrc.set_src(source);
+    //
+    //     Ok(texture)
+}
+
+pub struct Texture {
+    tex: WebGlTexture,
+    width: i32,
+    height: i32,
 }
