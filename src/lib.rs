@@ -9,6 +9,7 @@ use web_sys::console;
 use crate::renderer::{Renderer, Texture};
 
 mod renderer;
+mod ecs;
 
 const IMG: &[u8] = include_bytes!("../assets/bg_tileable.png");
 
@@ -43,13 +44,13 @@ pub fn start() -> Result<(), JsValue> {
             game.render_frame();
 
             window.request_animation_frame(f.borrow().as_ref().unwrap().as_ref().unchecked_ref())
-                .expect("Wtf even is this");
+                .expect("Frame request failed");
         }) as Box<dyn FnMut()>))
     }
 
     let window = web_sys::window().unwrap();
     window.request_animation_frame(outer_f.borrow().as_ref().unwrap().as_ref().unchecked_ref())
-        .expect("more wtf");
+        .expect("Frame request failed");
 
     Ok(())
 }
