@@ -35,6 +35,7 @@ struct HasComp {
     type_id: TypeId,
 }
 
+// TODO we can do the downcast thing instead of TypeId?
 impl HasComp {
     fn new<T: 'static>() -> Self {
         return HasComp { type_id: TypeId::of::<T>() };
@@ -62,29 +63,16 @@ impl Game {
         entity_id
     }
 
+    fn add_entity<T: EntityCreator>(&mut self, creator: &T) {
+        creator.create_entity(self);
+    }
+
     fn add_component<T: 'static>(&mut self, entity: usize, component: T) {
         self.components.push(ComponentSlice(entity, TypeId::of::<T>(), Box::new(RefCell::new(component))));
-
-        // for (comp_id, comp_type) in self.component_types.iter().enumerate() {
-        //     if let Some(_) = comp_type.as_any().downcast_ref::<RefCell<T>>()
-        //     {
-        //         self.components.push(ComponentSlice(entity, comp_id, Box::new(component)));
-        //         return;
-        //     }
-        // }
-        //
-        // // Type not found, need a new ID.
-        // let comp_id = self.unique_component_count;
-        // self.unique_component_count += 1;
-        //
-        // // Add to the component_types.
-        // let new_component_type: Option<T> = None;
-        // self.component_types.push(Box::new(RefCell::new(new_component_type)));
-        //
-        // self.components.push(ComponentSlice(entity, comp_id, Box::new(component)));
     }
 
     fn get_component<T: 'static>(&mut self, entity: usize) -> Option<RefMut<T>> {
+        // TODO we can do the downcast thing here instead of TypeId?
         match self.components.iter_mut().find(|x| x.0 == entity && x.1 == TypeId::of::<T>()) {
             None => { None }
             Some(ComponentSlice(_, _, comp)) => {
@@ -135,12 +123,37 @@ trait Updatable {
     fn update(delta: u16);
 }
 
+trait EntityCreator {
+    fn create_entity(&self, game: &mut Game) -> usize;
+}
+
+struct TextRenderer {}
+
+struct TextBox {}
+
+struct TextValue(String);
+
+impl EntityCreator for TextBox {
+    fn create_entity(&self, game: &mut Game) -> usize {
+        let entity_id = game.create_entity();
+
+        game.add_component(entity_id, TextRenderer {});
+        game.add_component(entity_id, TextValue("HAHAHA".to_string()));
+
+        entity_id
+    }
+}
+
+struct Parent(usize);
+
+struct Position(f64, f64);
+
 #[cfg(test)]
 mod test {
     use std::any::TypeId;
     use std::cell::{RefCell, RefMut};
 
-    use crate::ecs::{ComponentSlice, Game, HasComp};
+    use crate::ecs::{ComponentSlice, Game, HasComp, TextBox};
 
     struct TestComp(u32);
 
@@ -181,9 +194,12 @@ mod test {
 
         game.get_component::<TestComp>(0);
 
+        game.add_entity(&TextBox {});
+
         let a: Option<RefMut<TestComp>> = game.get_component(0);
 
-        let a = a.unwrap();
+        let mut a = a.unwrap();
+        a.0 = 4;
 
         println!("{}", a.0);
     }
