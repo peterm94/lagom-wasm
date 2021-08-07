@@ -1,6 +1,6 @@
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Formatter};
 use std::fmt;
 use std::rc::Rc;
@@ -140,7 +140,7 @@ impl World {
         let mut type_ids = record.archetype.borrow().type_vec.clone();
         type_ids.extend(components.into_iter());
 
-        let destination_archetype = self.get_archetype(&type_ids);
+        let destination_archetype = self.get_archetype(record.archetype.clone(), &type_ids);
 
         destination_archetype.borrow_mut().components.insert(*entity_id, current_components);
 
@@ -168,10 +168,9 @@ impl World {
         return entity_id;
     }
 
-    fn get_archetype(&mut self, component_types: &TypeVec) -> Rc<RefCell<Archetype>> {
-        let mut root = &self.archetypes;
-
-        let mut new = root.clone();
+    fn get_archetype(&mut self, current_archetype: Rc<RefCell<Archetype>>,
+                     component_types: &TypeVec) -> Rc<RefCell<Archetype>> {
+        let mut new = current_archetype.clone();
         for comp_type in component_types {
             new = Archetype::with(new, *comp_type);
         }
@@ -184,6 +183,79 @@ impl World {
 #[cfg(test)]
 mod test {
     use crate::ecs_archetypes::{EcsId, World};
+
+    #[test]
+    fn create_entity() {
+        let mut world = World::default();
+
+        let entity = world.add_entity(vec![1, 2, 3]);
+
+        assert!(world.has_comp(entity, 1));
+        assert!(world.has_comp(entity, 2));
+        assert!(world.has_comp(entity, 3));
+        assert!(!world.has_comp(entity, 4));
+    }
+
+    #[test]
+    fn add_component() {
+        let mut world = World::default();
+
+        let entity = world.add_entity(vec![1]);
+
+        world.add_component(&entity, 5);
+
+        assert!(world.has_comp(entity, 1));
+        assert!(world.has_comp(entity, 5));
+    }
+
+    #[test]
+    fn add_component_batch() {
+        let mut world = World::default();
+
+        let entity = world.add_entity(vec![1]);
+
+        world.add_components(&entity, vec![1, 5, 6]);
+
+        assert!(world.has_comp(entity, 1));
+        assert!(world.has_comp(entity, 5));
+        assert!(world.has_comp(entity, 6));
+    }
+
+    #[test]
+    fn remove_component() {
+        let mut world = World::default();
+
+        let entity = world.add_entity(vec![1, 2, 3]);
+        assert!(world.has_comp(entity, 1));
+        assert!(world.has_comp(entity, 2));
+        assert!(world.has_comp(entity, 3));
+
+        world.remove_component(&entity, 2);
+        assert!(world.has_comp(entity, 1));
+        assert!(!world.has_comp(entity, 2));
+        assert!(world.has_comp(entity, 3));
+    }
+
+    // TODO Make this impossible
+    #[test]
+    fn add_same_component_to_entity() {
+        let mut world = World::default();
+
+        let entity = world.add_entity(vec![1, 1]);
+
+        println!("{:#?}", &world);
+    }
+
+    #[test]
+    fn add_same_entity_type() {
+        let mut world = World::default();
+
+        let entity = world.add_entity(vec![1, 2, 3]);
+        let entity2 = world.add_entity(vec![1, 2, 3]);
+
+        println!("{:#?}", &world);
+    }
+
 
     #[test]
     fn test_complicated() {
