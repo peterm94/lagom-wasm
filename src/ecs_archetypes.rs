@@ -12,37 +12,25 @@ type TypeVec = Vec<EcsId>;
 type ComponentArray = Vec<Box<dyn std::any::Any>>;
 // type ComponentArray = Vec<Box<RefCell<dyn std::any::Any>>>;
 
-struct ComponentTuple {
-    components: ComponentArray,
+fn comp1<T: 'static>(c1: T) -> ComponentArray {
+    let mut tuple = ComponentArray::new();
+    tuple.push(Box::new(RefCell::new(c1)));
+    tuple
 }
 
-impl ComponentTuple {
-    fn new() -> Self {
-        Self { components: Vec::new() }
-    }
+fn comp2<T: 'static, T2: 'static>(c1: T, c2: T2) -> ComponentArray {
+    let mut tuple = ComponentArray::new();
+    tuple.push(Box::new(RefCell::new(c1)));
+    tuple.push(Box::new(RefCell::new(c2)));
+    tuple
+}
 
-    fn add<T: 'static>(&mut self, component: T) {
-        self.components.push(Box::new(RefCell::new(component)));
-    }
-
-    fn new1<T: 'static>(c1: T) -> Self {
-        let mut tuple = Self::new();
-        tuple.add(c1);
-        tuple
-    }
-    fn new2<T: 'static, T2: 'static>(c1: T, c2: T2) -> Self {
-        let mut tuple = Self::new();
-        tuple.add(c1);
-        tuple.add(c2);
-        tuple
-    }
-    fn new3<T: 'static, T2: 'static, T3: 'static>(c1: T, c2: T2, c3: T3) -> Self {
-        let mut tuple = Self::new();
-        tuple.add(c1);
-        tuple.add(c2);
-        tuple.add(c3);
-        tuple
-    }
+fn comp3<T: 'static, T2: 'static, T3: 'static>(c1: T, c2: T2, c3: T3) -> ComponentArray {
+    let mut tuple = ComponentArray::new();
+    tuple.push(Box::new(RefCell::new(c1)));
+    tuple.push(Box::new(RefCell::new(c2)));
+    tuple.push(Box::new(RefCell::new(c3)));
+    tuple
 }
 
 #[derive(Default)]
@@ -156,7 +144,7 @@ impl World {
     }
 
     fn add_component<T: 'static>(&mut self, entity_id: &EcsId, component: T) {
-        self.add_components(entity_id, ComponentTuple::new1(component));
+        self.add_components(entity_id, comp1(component));
     }
 
     fn type_ids(&mut self, components: &ComponentArray) -> TypeVec {
@@ -174,16 +162,15 @@ impl World {
         }).collect::<Vec<_>>()
     }
 
-    fn add_components(&mut self, entity_id: &EcsId, components: ComponentTuple) {
-        // let type_ids = self.type_ids(&components);
+    fn add_components(&mut self, entity_id: &EcsId, components: ComponentArray) {
+        let type_ids = self.type_ids(&components);
         let record = self.entity_index.get(entity_id).unwrap();
 
         let mut updated_components = record.archetype.borrow_mut().components.remove(entity_id).unwrap();
-        updated_components.extend(components.components.into_iter());
+        updated_components.extend(components.into_iter());
 
-        // let mut update_type_ids = record.archetype.borrow().type_vec.clone();
-        // update_type_ids.extend(type_ids.into_iter());
-        let update_type_ids = self.type_ids(&updated_components);
+        let mut update_type_ids = record.archetype.borrow().type_vec.clone();
+        update_type_ids.extend(type_ids.into_iter());
 
         let destination_archetype = self.get_archetype(record.archetype.clone(), &update_type_ids);
 
@@ -212,7 +199,7 @@ impl World {
         self.entity_index.insert(*entity_id, Record { archetype: destination_archetype.clone() }).unwrap();
     }
 
-    fn add_entity(&mut self, components: ComponentTuple) -> EcsId {
+    fn add_entity(&mut self, components: ComponentArray) -> EcsId {
         let entity_id = self.create_entity();
         self.add_components(&entity_id, components);
         return entity_id;
@@ -232,7 +219,7 @@ impl World {
 
 #[cfg(test)]
 mod test {
-    use crate::ecs_archetypes::{ComponentTuple, EcsId, World};
+    use crate::ecs_archetypes::{comp1, comp2, comp3, EcsId, World};
 
     struct A;
 
@@ -246,7 +233,7 @@ mod test {
     fn create_entity() {
         let mut world = World::default();
 
-        let entity = world.add_entity(ComponentTuple::new3(A, B, C));
+        let entity = world.add_entity(comp3(A, B, C));
 
         assert!(world.has_comp::<A>(entity));
         assert!(world.has_comp::<B>(entity));
@@ -258,7 +245,7 @@ mod test {
     fn add_component() {
         let mut world = World::default();
 
-        let entity = world.add_entity(ComponentTuple::new1(A));
+        let entity = world.add_entity(comp1(A));
 
         world.add_component(&entity, D);
 
@@ -270,9 +257,9 @@ mod test {
     fn add_component_batch() {
         let mut world = World::default();
 
-        let entity = world.add_entity(ComponentTuple::new1(B));
+        let entity = world.add_entity(comp1(B));
 
-        world.add_components(&entity, ComponentTuple::new3(A, C, D));
+        world.add_components(&entity, comp3(A, C, D));
 
         assert!(world.has_comp::<A>(entity));
         assert!(world.has_comp::<C>(entity));
@@ -283,7 +270,7 @@ mod test {
     fn remove_component() {
         let mut world = World::default();
 
-        let entity = world.add_entity(ComponentTuple::new3(A, B, C));
+        let entity = world.add_entity(comp3(A, B, C));
         assert!(world.has_comp::<A>(entity));
         assert!(world.has_comp::<B>(entity));
         assert!(world.has_comp::<C>(entity));
@@ -299,7 +286,7 @@ mod test {
     fn add_same_component_to_entity() {
         let mut world = World::default();
 
-        world.add_entity(ComponentTuple::new2(A, A));
+        world.add_entity(comp2(A, A));
 
         println!("{:#?}", &world);
     }
@@ -308,8 +295,8 @@ mod test {
     fn add_same_entity_type() {
         let mut world = World::default();
 
-        world.add_entity(ComponentTuple::new3(A, B, C));
-        world.add_entity(ComponentTuple::new3(A, B, C));
+        world.add_entity(comp3(A, B, C));
+        world.add_entity(comp3(A, B, C));
 
         println!("{:#?}", &world);
     }
@@ -326,8 +313,8 @@ mod test {
         let c2: EcsId = 5;
         let c3: EcsId = 6;
 
-        world.add_entity(ComponentTuple::new2(A, B));
-        world.add_entity(ComponentTuple::new2(A, B));
+        world.add_entity(comp2(A, B));
+        world.add_entity(comp2(A, B));
 
         println!("{:#?}", &world);
     }
