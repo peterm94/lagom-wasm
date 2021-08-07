@@ -10,6 +10,7 @@ use crate::renderer::{Renderer, Texture};
 
 mod renderer;
 mod ecs;
+mod ecs_archetypes;
 
 const IMG: &[u8] = include_bytes!("../assets/bg_tileable.png");
 
