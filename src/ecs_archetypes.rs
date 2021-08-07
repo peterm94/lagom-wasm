@@ -2,8 +2,8 @@ use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
-use std::rc::Rc;
 use std::fmt;
+use std::rc::Rc;
 
 type EcsId = usize;
 
@@ -23,9 +23,8 @@ struct Archetype {
 
     // Archetype component storage.
     // Vector of component groups that match the type_vec type structure.
-    // We aren't using a map to help with the eventual SIMD effort.
-    components: Vec<ComponentArray>,
-    entity_ids: Vec<EcsId>,
+    // We aren't using a map to help with the eventual SIMD effort. -- maybe one day
+    components: HashMap<EcsId, ComponentArray>,
 
 }
 
@@ -35,7 +34,6 @@ impl Debug for Archetype {
             .field("type_vec", &self.type_vec)
             .field("add", &self.add)
             .field("components", &self.components)
-            .field("entity_ids", &self.entity_ids)
             .finish()
     }
 }
@@ -84,7 +82,6 @@ impl Archetype {
 #[derive(Debug)]
 struct Record {
     archetype: Rc<RefCell<Archetype>>,
-    row: usize,
 }
 
 #[derive(Default, Debug)]
@@ -105,34 +102,40 @@ impl World {
         let entity_id: EcsId = self.entity_count;
         self.entity_count += 1;
 
-        // let components = vec![Box::new(RefCell::new((EntityId(entity_id))))];
-        // self.add_component(&entity_id, EntityId(entity_id));
+        self.entity_index.insert(entity_id, Record { archetype: self.archetypes.clone() });
+        self.archetypes.borrow_mut().components.insert(entity_id, ComponentArray::new());
 
         return entity_id;
     }
 
-    //TODO make this add_component, need to figure out the archetype traversal first
-    fn add_entity(&mut self, entity_id: &EcsId, components: Vec<EcsId>) {
-
-        // TODO sort the components
-        // let mut components = components;
-        // components.push(EntityId(entity_id));
-
-        // Match the archetype.
-        let mut archetype = self.get_archetype2(&components);
-
-        // Update the entity index with a record so it can be found easily.
-        let row = archetype.borrow().components.len();
-        self.entity_index.insert(*entity_id, Record { archetype: archetype.clone(), row });
-
-        // Insert the data into the archetype container.
-        // TODO actually add the components.
-        let mut archetype = archetype.borrow_mut();
-        archetype.components.push(ComponentArray::new());
-        archetype.entity_ids.push(*entity_id);
+    fn add_component(&mut self, entity_id: &EcsId, component: EcsId) {
+        self.add_components(entity_id, vec![component]);
     }
 
-    fn get_archetype2(&mut self, component_types: &TypeVec) -> Rc<RefCell<Archetype>> {
+    fn add_components(&mut self, entity_id: &EcsId, components: Vec<EcsId>) {
+        let record = self.entity_index.get(entity_id).unwrap();
+
+        // TODO insert the components
+        let mut current_components = record.archetype.borrow_mut().components.remove(entity_id).unwrap();
+        // current_components.extend(components.into_iter());
+        let mut type_ids = record.archetype.borrow().type_vec.clone();
+        type_ids.extend(components.into_iter());
+
+        let destination_archetype = self.get_archetype(&type_ids);
+
+        destination_archetype.borrow_mut().components.insert(*entity_id, current_components);
+
+        // Update the record entry.
+        self.entity_index.insert(*entity_id, Record { archetype: destination_archetype.clone() }).unwrap();
+    }
+
+    fn add_entity(&mut self, components: Vec<EcsId>) -> EcsId {
+        let entity_id = self.create_entity();
+        self.add_components(&entity_id, components);
+        return entity_id;
+    }
+
+    fn get_archetype(&mut self, component_types: &TypeVec) -> Rc<RefCell<Archetype>> {
         let mut root = &self.archetypes;
 
         let mut new = root.clone();
@@ -142,50 +145,6 @@ impl World {
 
         return new.clone();
     }
-
-    // fn get_archetype<T: 'static>(&mut self, components: &Vec<T>) -> usize {
-    //     let mut type_ids = Vec::with_capacity(components.len());
-    //
-    //     for component in components {
-    //         let comp_type_id = component.type_id();
-    //         let type_id = match self.type_id_map.get(&comp_type_id) {
-    //             None => {
-    //                 let idx = self.type_id_map.len();
-    //                 self.type_id_map.insert(comp_type_id, idx);
-    //                 idx
-    //             }
-    //             Some(idx) => {
-    //                 *idx
-    //             }
-    //         };
-    //
-    //         type_ids.push(type_id);
-    //     }
-    //
-    //     for (archetype_id, archetype) in self.archetypes.iter_mut().enumerate() {
-    //         let type_vec = &archetype.type_vec;
-    //
-    //         if type_vec.len() != type_ids.len() { continue; }
-    //         let mut same_type = true;
-    //
-    //         for types in &type_ids {
-    //             if !archetype.type_vec.contains(types) {
-    //                 same_type = false;
-    //                 break;
-    //             }
-    //         }
-    //
-    //         // Found the right type, insert it into here.
-    //         if same_type {
-    //             return archetype_id;
-    //         }
-    //     }
-    //
-    //     // No match, new archetype.
-    //     let archetype = Archetype::new(type_ids);
-    //     self.archetypes.push(archetype);
-    //     return self.archetypes.len() - 1;
-    // }
 }
 
 
@@ -200,13 +159,12 @@ mod test {
         let component_type = 1;
         let entity_type = 2;
 
-        let e: EcsId = 3;
         let c1: EcsId = 4;
         let c2: EcsId = 5;
         let c3: EcsId = 6;
 
-        world.add_entity(&e, vec![c1, c2]);
-        world.add_entity(&45, vec![c1, c2]);
+        world.add_entity(vec![c1, c2]);
+        world.add_entity(vec![c1, c2]);
 
         println!("{:#?}", &world);
     }
@@ -215,10 +173,9 @@ mod test {
     fn test_has_comp() {
         let mut world = World::default();
 
-        let e: EcsId = 1;
         let c1: EcsId = 2;
 
-        world.add_entity(&e, vec![c1]);
+        let e = world.add_entity(vec![c1]);
 
         assert!(world.has_comp(e, c1));
     }
@@ -227,11 +184,10 @@ mod test {
     fn test_no_comp() {
         let mut world = World::default();
 
-        let e: EcsId = 1;
         let c1: EcsId = 2;
         let c2: EcsId = 3;
 
-        world.add_entity(&e, vec![c1]);
+        let e = world.add_entity(vec![c1]);
 
         assert!(!world.has_comp(e, c2));
     }
