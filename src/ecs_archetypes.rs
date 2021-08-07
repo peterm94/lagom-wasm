@@ -9,8 +9,8 @@ type EcsId = usize;
 
 type TypeVec = Vec<EcsId>;
 
-type ComponentArray = Vec<Box<dyn std::any::Any>>;
-// type ComponentArray = Vec<Box<RefCell<dyn std::any::Any>>>;
+// type ComponentArray = Vec<Box<dyn std::any::Any>>;
+type ComponentArray = Vec<Box<RefCell<dyn std::any::Any>>>;
 
 fn comp1<T: 'static>(c1: T) -> ComponentArray {
     let mut tuple = ComponentArray::new();
@@ -128,9 +128,13 @@ struct World {
 
 impl World {
     fn has_comp<T: 'static>(&self, entity: EcsId) -> bool {
-        let record = self.entity_index.get(&entity).unwrap();
-        let type_id = TypeId::of::<T>();
-        return record.archetype.borrow().type_vec.contains(self.type_id_map.get(&type_id).unwrap());
+        if let Some(record) = self.entity_index.get(&entity) {
+            let type_id = TypeId::of::<T>();
+            if let Some(type_id) = self.type_id_map.get(&type_id) {
+                return record.archetype.borrow().type_vec.contains(type_id);
+            }
+        }
+        return false;
     }
 
     fn create_entity(&mut self) -> EcsId {
@@ -144,33 +148,15 @@ impl World {
     }
 
     fn add_component<T: 'static>(&mut self, entity_id: &EcsId, component: T) {
-        self.add_components(entity_id, comp1(component));
-    }
-
-    fn type_ids(&mut self, components: &ComponentArray) -> TypeVec {
-        components.iter().map(|x| {
-            let type_id = &x.type_id();
-            match self.type_id_map.get(type_id) {
-                None => {
-                    let next_id = self.type_id_count;
-                    self.type_id_count += 1;
-                    self.type_id_map.insert(type_id.clone(), next_id);
-                    next_id
-                }
-                Some(id) => { *id }
-            }
-        }).collect::<Vec<_>>()
-    }
-
-    fn add_components(&mut self, entity_id: &EcsId, components: ComponentArray) {
-        let type_ids = self.type_ids(&components);
+        // self.add_components(entity_id, comp1(component));
+        let type_id = self.id_for_type(component.type_id());
         let record = self.entity_index.get(entity_id).unwrap();
 
         let mut updated_components = record.archetype.borrow_mut().components.remove(entity_id).unwrap();
-        updated_components.extend(components.into_iter());
+        updated_components.push(Box::new(RefCell::new(component)));
 
         let mut update_type_ids = record.archetype.borrow().type_vec.clone();
-        update_type_ids.extend(type_ids.into_iter());
+        update_type_ids.push(type_id);
 
         let destination_archetype = self.get_archetype(record.archetype.clone(), &update_type_ids);
 
@@ -179,6 +165,72 @@ impl World {
         // Update the record entry.
         self.entity_index.insert(*entity_id, Record { archetype: destination_archetype.clone() }).unwrap();
     }
+
+    fn id_for_type(&mut self, type_id: TypeId) -> usize {
+        match self.type_id_map.get(&type_id) {
+            None => {
+                let next_id = self.type_id_count;
+                self.type_id_count += 1;
+                self.type_id_map.insert(type_id.clone(), next_id);
+                next_id
+            }
+            Some(id) => { *id }
+        }
+    }
+
+    // fn type_ids(&mut self, components: &ComponentArray) -> TypeVec {
+    //     let mut type_ids = TypeVec::with_capacity(components.len());
+    //     for comp in components {
+    //         let type_id = comp.clone().borrow().type_id();
+    //
+    //         let my_type = match self.type_id_map.get(&type_id) {
+    //             None => {
+    //                 let next_id = self.type_id_count;
+    //                 self.type_id_count += 1;
+    //                 self.type_id_map.insert(type_id.clone(), next_id);
+    //                 next_id
+    //             }
+    //             Some(id) => { *id }
+    //         };
+    //         type_ids.push(my_type);
+    //     }
+    //
+    //     return type_ids;
+    // }
+
+    // fn add_components(&mut self, entity_id: &EcsId, components: ComponentArray)
+    // {
+    // let mut type_ids = TypeVec::with_capacity(components.len());
+    // for comp in components {
+    //     let type_id = comp.borrow().type_id().clone();
+    //
+    //     let my_type = match self.type_id_map.get(&type_id) {
+    //         None => {
+    //             let next_id = self.type_id_count;
+    //             self.type_id_count += 1;
+    //             self.type_id_map.insert(type_id.clone(), next_id);
+    //             next_id
+    //         }
+    //         Some(id) => { *id }
+    //     };
+    //     type_ids.push(my_type);
+    // }
+    //
+    // let record = self.entity_index.get(entity_id).unwrap();
+    //
+    // let mut updated_components = record.archetype.borrow_mut().components.remove(entity_id).unwrap();
+    // updated_components.extend(components.into_iter());
+    //
+    // let mut update_type_ids = record.archetype.borrow().type_vec.clone();
+    // update_type_ids.extend(type_ids.into_iter());
+    //
+    // let destination_archetype = self.get_archetype(record.archetype.clone(), &update_type_ids);
+    //
+    // destination_archetype.borrow_mut().components.insert(*entity_id, updated_components);
+    //
+    // // Update the record entry.
+    // self.entity_index.insert(*entity_id, Record { archetype: destination_archetype.clone() }).unwrap();
+    // }
 
     fn remove_component<T: 'static>(&mut self, entity_id: &EcsId) {
         let record = self.entity_index.get(&entity_id).unwrap();
@@ -197,12 +249,6 @@ impl World {
 
         // Update the record entry.
         self.entity_index.insert(*entity_id, Record { archetype: destination_archetype.clone() }).unwrap();
-    }
-
-    fn add_entity(&mut self, components: ComponentArray) -> EcsId {
-        let entity_id = self.create_entity();
-        self.add_components(&entity_id, components);
-        return entity_id;
     }
 
     fn get_archetype(&mut self, current_archetype: Rc<RefCell<Archetype>>,
@@ -230,10 +276,13 @@ mod test {
     struct D;
 
     #[test]
-    fn create_entity() {
+    fn add_component() {
         let mut world = World::default();
 
-        let entity = world.add_entity(comp3(A, B, C));
+        let entity = world.create_entity();
+        world.add_component(&entity, A);
+        world.add_component(&entity, B);
+        world.add_component(&entity, C);
 
         assert!(world.has_comp::<A>(entity));
         assert!(world.has_comp::<B>(entity));
@@ -242,35 +291,14 @@ mod test {
     }
 
     #[test]
-    fn add_component() {
-        let mut world = World::default();
-
-        let entity = world.add_entity(comp1(A));
-
-        world.add_component(&entity, D);
-
-        assert!(world.has_comp::<A>(entity));
-        assert!(world.has_comp::<D>(entity));
-    }
-
-    #[test]
-    fn add_component_batch() {
-        let mut world = World::default();
-
-        let entity = world.add_entity(comp1(B));
-
-        world.add_components(&entity, comp3(A, C, D));
-
-        assert!(world.has_comp::<A>(entity));
-        assert!(world.has_comp::<C>(entity));
-        assert!(world.has_comp::<D>(entity));
-    }
-
-    #[test]
     fn remove_component() {
         let mut world = World::default();
 
-        let entity = world.add_entity(comp3(A, B, C));
+        let entity = world.create_entity();
+        world.add_component(&entity, A);
+        world.add_component(&entity, B);
+        world.add_component(&entity, C);
+
         assert!(world.has_comp::<A>(entity));
         assert!(world.has_comp::<B>(entity));
         assert!(world.has_comp::<C>(entity));
@@ -286,7 +314,9 @@ mod test {
     fn add_same_component_to_entity() {
         let mut world = World::default();
 
-        world.add_entity(comp2(A, A));
+        let entity = world.create_entity();
+        world.add_component(&entity, A);
+        world.add_component(&entity, A);
 
         println!("{:#?}", &world);
     }
@@ -295,26 +325,15 @@ mod test {
     fn add_same_entity_type() {
         let mut world = World::default();
 
-        world.add_entity(comp3(A, B, C));
-        world.add_entity(comp3(A, B, C));
+        let entity = world.create_entity();
+        world.add_component(&entity, A);
+        world.add_component(&entity, B);
+        world.add_component(&entity, C);
 
-        println!("{:#?}", &world);
-    }
-
-
-    #[test]
-    fn test_complicated() {
-        let mut world = World::default();
-
-        let component_type = 1;
-        let entity_type = 2;
-
-        let c1: EcsId = 4;
-        let c2: EcsId = 5;
-        let c3: EcsId = 6;
-
-        world.add_entity(comp2(A, B));
-        world.add_entity(comp2(A, B));
+        let entity2 = world.create_entity();
+        world.add_component(&entity2, A);
+        world.add_component(&entity2, B);
+        world.add_component(&entity2, C);
 
         println!("{:#?}", &world);
     }
