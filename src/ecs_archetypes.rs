@@ -158,7 +158,7 @@ impl World {
         let mut update_type_ids = record.archetype.borrow().type_vec.clone();
         update_type_ids.push(type_id);
 
-        let destination_archetype = self.get_archetype(record.archetype.clone(), &update_type_ids);
+        let destination_archetype = Archetype::with(record.archetype.clone(), type_id);
 
         destination_archetype.borrow_mut().components.insert(*entity_id, updated_components);
 
@@ -250,16 +250,6 @@ impl World {
         // Update the record entry.
         self.entity_index.insert(*entity_id, Record { archetype: destination_archetype.clone() }).unwrap();
     }
-
-    fn get_archetype(&mut self, current_archetype: Rc<RefCell<Archetype>>,
-                     component_types: &TypeVec) -> Rc<RefCell<Archetype>> {
-        let mut new = current_archetype.clone();
-        for comp_type in component_types {
-            new = Archetype::with(new, *comp_type);
-        }
-
-        return new.clone();
-    }
 }
 
 
@@ -282,12 +272,14 @@ mod test {
         let entity = world.create_entity();
         world.add_component(&entity, A);
         world.add_component(&entity, B);
-        world.add_component(&entity, C);
+        // world.add_component(&entity, C);
+        //
+        // assert!(world.has_comp::<A>(entity));
+        // assert!(world.has_comp::<B>(entity));
+        // assert!(world.has_comp::<C>(entity));
+        // assert!(!world.has_comp::<D>(entity));
 
-        assert!(world.has_comp::<A>(entity));
-        assert!(world.has_comp::<B>(entity));
-        assert!(world.has_comp::<C>(entity));
-        assert!(!world.has_comp::<D>(entity));
+        println!("{:#?}", &world);
     }
 
     #[test]
