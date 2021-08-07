@@ -22,10 +22,8 @@ struct Archetype {
     remove: HashMap<EcsId, Rc<RefCell<Archetype>>>,
 
     // Archetype component storage.
-    // Vector of component groups that match the type_vec type structure.
-    // We aren't using a map to help with the eventual SIMD effort. -- maybe one day
+    // Entities that have components that match the type_vec type structure.
     components: HashMap<EcsId, ComponentArray>,
-
 }
 
 impl Debug for Archetype {
@@ -69,7 +67,28 @@ impl Archetype {
         }
     }
 
-    // fn without(&mut self, type_id: EcsId) -> Archetype {}
+    fn without(archetype: Rc<RefCell<Archetype>>, type_id: EcsId) -> Rc<RefCell<Archetype>> {
+        let mut original_archetype = archetype.borrow_mut();
+
+        // Find the edge that adds the id.
+        match original_archetype.remove.get(&type_id) {
+            None => {
+                // Create the archetype.
+                let mut new_types_vec = original_archetype.type_vec.clone();
+                let new_types_vec = new_types_vec.into_iter().filter(|x| *x != type_id).collect::<Vec<_>>();
+                let mut new_archetype = Rc::new(RefCell::new(Archetype::new(new_types_vec)));
+
+                // Add the backwards link
+                original_archetype.remove.insert(type_id, new_archetype.clone());
+
+                // Add the forward link.
+                new_archetype.borrow_mut().add.insert(type_id, archetype.clone());
+
+                return new_archetype;
+            }
+            Some(archetype) => archetype.clone()
+        }
+    }
 }
 
 
@@ -122,6 +141,20 @@ impl World {
         type_ids.extend(components.into_iter());
 
         let destination_archetype = self.get_archetype(&type_ids);
+
+        destination_archetype.borrow_mut().components.insert(*entity_id, current_components);
+
+        // Update the record entry.
+        self.entity_index.insert(*entity_id, Record { archetype: destination_archetype.clone() }).unwrap();
+    }
+
+    fn remove_component(&mut self, entity_id: &EcsId, component: EcsId) {
+        let record = self.entity_index.get(entity_id).unwrap();
+
+        let mut current_components = record.archetype.borrow_mut().components.remove(entity_id).unwrap();
+        // TODO remove the component
+
+        let destination_archetype = Archetype::without(record.archetype.clone(), component);
 
         destination_archetype.borrow_mut().components.insert(*entity_id, current_components);
 
