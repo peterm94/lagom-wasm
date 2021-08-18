@@ -37,6 +37,8 @@ struct Scene {
 
     entity_added: Rc<Observable<Self, WrappedEntity>>,
     entity_removed: Rc<Observable<Self, WrappedEntity>>,
+
+    systems: Vec<System>,
 }
 
 // TODO Is there any way we can put this in scene? or does the wacky mutability break it?
@@ -60,6 +62,7 @@ fn create_entity(scene: &Rc<RefCell<Scene>>) -> Rc<RefCell<Entity>> {
         component_removed: Observable::new(),
         child_added,
         child_removed,
+        children: Vec::new(),
         scene: scene.clone(),
     }));
 
@@ -72,9 +75,15 @@ fn create_entity(scene: &Rc<RefCell<Scene>>) -> Rc<RefCell<Entity>> {
     entity
 }
 
+// TODO we could actually archetype systems?
+//  if not, we at least need to propagate component create/remove events with their parent. lagom was wack
+fn add_system(scene: &Rc<RefCell<Scene>>, system: System) {
+    let scene = scene.borrow_mut();
+}
+
 impl Scene {
     fn new() -> Self {
-        Self { id: 0, entities: Vec::new(), entity_added: Rc::new(Observable::new()), entity_removed: Rc::new(Observable::new()) }
+        Self { id: 0, entities: Vec::new(), entity_added: Rc::new(Observable::new()), entity_removed: Rc::new(Observable::new()), systems: Vec::new() }
     }
 }
 
@@ -86,6 +95,7 @@ struct Entity {
     // parent: Option<Rc<Entity>>,
     child_added: Observable<Self, WrappedEntity>,
     child_removed: Observable<Self, WrappedEntity>,
+    children: Vec<WrappedEntity>,
     scene: Rc<RefCell<Scene>>,
 }
 
@@ -97,6 +107,14 @@ impl Entity {
         let wrapped_comp = Rc::new(RefCell::new(component));
         self.components.push(wrapped_comp.clone());
         self.component_added.trigger(&self, wrapped_comp.clone());
+    }
+
+    fn create_child(&mut self) -> Rc<RefCell<Entity>> {
+        let child = create_entity(&self.scene);
+        self.children.push(child.clone());
+        self.child_added.trigger(self, child.clone());
+
+        return child;
     }
 }
 
@@ -132,6 +150,15 @@ mod test {
         // // let mut e = e.borrow_mut();
         // e.component_added.register(|e, x| { println!("OOF") });
         // e.add_component(A);
+    }
+
+    #[test]
+    fn test_child() {
+        let mut scene = Rc::new(RefCell::new(Scene::new()));
+
+        let mut e = create_entity(&scene);
+
+        let child = e.borrow_mut().create_child();
     }
 
     struct B<'a> {
