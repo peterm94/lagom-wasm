@@ -5,33 +5,15 @@ use std::fmt::{Debug, Formatter};
 use std::fmt;
 use std::rc::Rc;
 
+/// This impl is really complicated and I don't have the time or brain juice to do it properly before october.
+/// Maybe I'll have another go for next year.
+
 type EcsId = usize;
 
 type TypeVec = Vec<EcsId>;
 
 // type ComponentArray = Vec<Box<dyn std::any::Any>>;
 type ComponentArray = Vec<Box<RefCell<dyn std::any::Any>>>;
-
-fn comp1<T: 'static>(c1: T) -> ComponentArray {
-    let mut tuple = ComponentArray::new();
-    tuple.push(Box::new(RefCell::new(c1)));
-    tuple
-}
-
-fn comp2<T: 'static, T2: 'static>(c1: T, c2: T2) -> ComponentArray {
-    let mut tuple = ComponentArray::new();
-    tuple.push(Box::new(RefCell::new(c1)));
-    tuple.push(Box::new(RefCell::new(c2)));
-    tuple
-}
-
-fn comp3<T: 'static, T2: 'static, T3: 'static>(c1: T, c2: T2, c3: T3) -> ComponentArray {
-    let mut tuple = ComponentArray::new();
-    tuple.push(Box::new(RefCell::new(c1)));
-    tuple.push(Box::new(RefCell::new(c2)));
-    tuple.push(Box::new(RefCell::new(c3)));
-    tuple
-}
 
 #[derive(Default)]
 struct Archetype {
@@ -122,13 +104,12 @@ struct World {
     archetypes: Rc<RefCell<Archetype>>,
     entity_index: HashMap<EcsId, TypeVec>,
 
+    entity_tree: HashMap<EcsId, Vec<EcsId>>,
+
     // This is to convert type_id to a usize
     type_id_map: HashMap<TypeId, usize>,
     ecs_id_count: usize,
 }
-
-// TODO entities need to go in the archetypes somehow
-// TODO need to sort the component arrays, make sure it is the same order as the type map
 
 impl World {
     fn has_comp<T: 'static>(&self, entity: EcsId) -> bool {
@@ -146,6 +127,7 @@ impl World {
         self.ecs_id_count += 1;
 
         self.entity_index.insert(entity_id, TypeVec::new());
+        self.entity_tree.insert(entity_id, Vec::new());
         self.archetypes.borrow_mut().components.insert(entity_id, ComponentArray::new());
 
         return entity_id;
@@ -165,11 +147,19 @@ impl World {
         return self.entity_index.get(entity_id).unwrap().clone();
     }
 
-    fn add_entity(&mut self, parent_entity: &EcsId, child_entity: &EcsId) {
-        let type_vec = self.get_type_vec(parent_entity);
-        let archetype = self.find_archetype(&type_vec).clone();
+    fn add_child(&mut self, parent_entity: &EcsId, child_entity: &EcsId) {
+        // self.entity_tree.get(parent_entity).unwrap().push(*child_entity);
 
-        // TODO...
+        // TODO should this impact the archetype? I almost want component group types that I can compose entities of?
+        //  In that case, would it not be better to just store the data together on the component?
+    }
+
+    fn remove_child(&mut self, parent_entity: &EcsId, child_entity: &EcsId) {
+
+    }
+
+    fn get_children(&self, entity_id: &EcsId) -> Vec<EcsId> {
+        return self.entity_tree.get(entity_id).unwrap().clone();
     }
 
     fn add_component<T: 'static>(&mut self, entity_id: &EcsId, component: T) {
@@ -188,7 +178,7 @@ impl World {
         self.entity_index.insert(*entity_id, destination_archetype.borrow().type_vec.clone()).unwrap();
 
         // Add the component definition ot the entity index.
-        self.entity_index.insert(type_id, TypeVec::new());
+        // self.entity_index.insert(type_id, TypeVec::new());
     }
 
     fn id_for_type(&mut self, type_id: TypeId) -> usize {
@@ -197,7 +187,6 @@ impl World {
                 let next_id = self.ecs_id_count;
                 self.ecs_id_count += 1;
                 self.type_id_map.insert(type_id.clone(), next_id);
-                // self.entity_index.insert(next_id, TypeVec::new());
                 next_id
             }
             Some(id) => { *id }
@@ -229,7 +218,7 @@ impl World {
 
 #[cfg(test)]
 mod test {
-    use crate::ecs_archetypes::{comp1, comp2, comp3, EcsId, World};
+    use crate::ecs_archetypes::{EcsId, World};
 
     struct A;
 
@@ -265,7 +254,7 @@ mod test {
 
         let entity2 = world.create_entity();
         world.add_component(&entity, B);
-        world.add_entity(&entity, &entity2);
+        world.add_child(&entity, &entity2);
 
         println!("{:#?}", &world);
     }
