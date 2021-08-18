@@ -5,7 +5,7 @@ use std::rc::Rc;
 /// This one will be more faithful to the original ts implementation.
 
 type WrappedComp = Rc<RefCell<dyn std::any::Any>>;
-type WrappedEntity<'a> = Rc<RefCell<Entity<'a>>>;
+type WrappedEntity = Rc<RefCell<Entity>>;
 
 type Observer<C, T> = fn(caller: &C, data: &T);
 
@@ -31,80 +31,68 @@ impl<C, T> Observable<C, T> {
     // TODO we need to be able to clean this up wtf typescript how do you work
 }
 
-struct Scene<'a> {
+struct Scene {
     id: usize,
-    entities: Vec<Rc<RefCell<Entity<'a>>>>,
-    entity_added: Rc<Observable<Self, Rc<RefCell<Entity<'a>>>>>,
-    entity_removed: Rc<Observable<Self, Rc<RefCell<Entity<'a>>>>>,
+    entities: Vec<WrappedEntity>,
+
+    entity_added: Rc<Observable<Self, WrappedEntity>>,
+    entity_removed: Rc<Observable<Self, WrappedEntity>>,
 }
 
-impl<'a> Scene<'a> {
+// TODO Is there any way we can put this in scene? or does the wacky mutability break it?
+fn create_entity(scene: &Rc<RefCell<Scene>>) -> Rc<RefCell<Entity>> {
+    // Create hooks into the child object.
+    let mut child_added: Observable<Entity, WrappedEntity> = Observable::new();
+    child_added.register(|parent, child| {
+        let scene = parent.scene.borrow_mut();
+        scene.entity_added.trigger(&scene, child.clone());
+    });
+    let mut child_removed: Observable<Entity, WrappedEntity> = Observable::new();
+    child_removed.register(|parent, child| {
+        let scene = parent.scene.borrow_mut();
+        scene.entity_removed.trigger(&scene, child.clone());
+    });
+
+    let entity = Rc::new(RefCell::new(Entity {
+        id: 0,
+        components: Vec::new(),
+        component_added: Observable::new(),
+        component_removed: Observable::new(),
+        child_added,
+        child_removed,
+        scene: scene.clone(),
+    }));
+
+    let mut scene = scene.borrow_mut();
+    scene.entities.push(entity.clone());
+
+    // Trigger the entity added to scene event.
+    scene.entity_added.trigger(&*scene, entity.clone());
+
+    entity
+}
+
+impl Scene {
     fn new() -> Self {
         Self { id: 0, entities: Vec::new(), entity_added: Rc::new(Observable::new()), entity_removed: Rc::new(Observable::new()) }
     }
-
-    fn create_entity(&'a mut self) -> WrappedEntity {
-        let mut child_create: Observable<Entity<'a>, WrappedEntity<'a>> = Observable::new();
-        child_create.register(|parent, child| {
-            let scene = parent.scene.borrow_mut();
-            scene.entity_added.trigger(&scene, child.clone());
-        });
-
-        // let wrapped_entity = Rc::new(RefCell::new(Entity::new(self)));
-        //
-        // let local = wrapped_entity.clone();
-        // let local = local.borrow_mut();
-        // local.scene.clone().borrow_mut().entities.push(wrapped_entity.clone());
-        // &self.entity_added.trigger(wrapped_entity.clone());
-
-        // Propagate child events.
-
-        // let entity_added_listener = self.entity_added.clone();
-        // let entity_removed_listener = self.entity_removed.clone();
-        // local.child_added.register(|x| { entity_added_listener.trigger(x.clone()) });
-        // local.child_removed.register(|x| { entity_removed_listener.trigger(x.clone()) });
-        let entity = Entity {
-            id: 0,
-            components: Vec::new(),
-            component_added: Observable::new(),
-            component_removed: Observable::new(),
-            child_added: child_create,
-            child_removed: Observable::new(),
-            scene: RefCell::new(self),
-        };
-
-        return Rc::new(RefCell::new(entity));
-    }
 }
 
-struct Entity<'a> {
+struct Entity {
     id: usize,
     components: Vec<WrappedComp>,
     component_added: Observable<Self, WrappedComp>,
     component_removed: Observable<Self, WrappedComp>,
     // parent: Option<Rc<Entity>>,
-    child_added: Observable<Self, WrappedEntity<'a>>,
-    child_removed: Observable<Self, WrappedEntity<'a>>,
-    scene: RefCell<&'a Scene<'a>>,
+    child_added: Observable<Self, WrappedEntity>,
+    child_removed: Observable<Self, WrappedEntity>,
+    scene: Rc<RefCell<Scene>>,
 }
 
 // TODO do I need this?
 trait Component {}
 
-impl<'a> Entity<'a> {
-    // TODO BAN creation of this, only allow it to be created via a scene.
-    fn new(scene: &'a Scene<'a>) -> Self {
-        Self {
-            id: 0,
-            components: Vec::new(),
-            component_added: Observable::new(),
-            component_removed: Observable::new(),
-            child_added: Observable::new(),
-            child_removed: Observable::new(),
-            scene: RefCell::new(scene),
-        }
-    }
-
+impl Entity {
     fn add_component<T: 'static>(&mut self, component: T) {
         let wrapped_comp = Rc::new(RefCell::new(component));
         self.components.push(wrapped_comp.clone());
@@ -114,7 +102,7 @@ impl<'a> Entity<'a> {
 
 struct System {
     types: Vec<TypeId>,
-    func: fn(Rc<Entity>, u64),
+    func: fn(WrappedEntity, u64),
 }
 
 impl System {}
@@ -122,21 +110,28 @@ impl System {}
 #[cfg(test)]
 mod test {
     use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
 
-    use crate::ecs_v3::{Entity, Scene};
+    use crate::ecs_v3::{create_entity, Entity, Scene};
 
     struct A;
 
 
     #[test]
-    fn create_entity() {
-        let mut scene = Scene::new();
+    fn create_entity_test() {
+        let mut scene = Rc::new(RefCell::new(Scene::new()));
 
-        let mut e = scene.create_entity();
+        let mut e = create_entity(&scene);
 
-        let mut e = e.borrow_mut();
-        e.component_added.register(|e, x| { println!("OOF") });
-        e.add_component(A);
+        e.borrow_mut().component_added.register(|e, x| { println!(":HELLO") });
+
+        let mut e = create_entity(&scene);
+        // let f = create_entity(&scene);
+        // let g = create_entity(&scene);
+        //
+        // // let mut e = e.borrow_mut();
+        // e.component_added.register(|e, x| { println!("OOF") });
+        // e.add_component(A);
     }
 
     struct B<'a> {
