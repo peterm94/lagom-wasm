@@ -169,10 +169,10 @@ impl World {
         let archetype = self.find_archetype(&type_vec).clone();
 
         let mut updated_components = archetype.borrow_mut().components.remove(entity_id).unwrap();
-        updated_components.push(Box::new(RefCell::new(component)));
+        updated_components.push(Box::new(RefCell::new(component)));), type_id);
+        destination_archetype.borrow_mut().components.insert(*entity_id, updated_component
 
-        let destination_archetype = Archetype::with(archetype.clone(), type_id);
-        destination_archetype.borrow_mut().components.insert(*entity_id, updated_components);
+        let destination_archetype = Archetype::with(archetype.clone(s);
 
         // Update the record entry.
         self.entity_index.insert(*entity_id, destination_archetype.borrow().type_vec.clone()).unwrap();
