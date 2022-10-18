@@ -1,7 +1,9 @@
+use proc_macro::TokenStream;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use image::RgbaImage;
+use js_sys::{Array, Object};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::console;
@@ -12,8 +14,10 @@ mod renderer;
 mod ecs;
 mod ecs_archetypes;
 mod ecs_v3;
+mod hecs_playground;
 
 const IMG: &[u8] = include_bytes!("../assets/bg_tileable.png");
+
 
 type UpdateFn = fn(&mut LagomGame, delta: f64);
 
@@ -22,7 +26,57 @@ const update: UpdateFn = |game, delta| {
     game.draw(0, 4, 10);
 };
 
-#[wasm_bindgen(start)]
+trait TsType {
+    fn get_id(&self) -> usize;
+}
+
+struct A(usize);
+
+struct B(usize);
+
+impl TsType for A {
+    fn get_id(&self) -> usize {
+        self.0
+    }
+}
+
+impl TsType for B {
+    fn get_id(&self) -> usize {
+        self.0
+    }
+}
+
+static mut tidx: usize = 0;
+static hello: Vec<fn(usize) -> dyn TsType> = vec![|x| { A(x) }, |x| { B(x) }];
+
+#[wasm_bindgen]
+pub fn radd(a: u32, b: u32) -> u32 {
+    a + b
+}
+
+#[wasm_bindgen]
+pub fn who_am_i(x: js_sys::Object) {
+    let arr: Array = js_sys::Object::entries(&x);
+}
+
+fn get_type() {
+    let x = unsafe { hello.get(tidx) }.unwrap();
+    unsafe { tidx += 1; }
+}
+
+#[wasm_bindgen]
+pub fn read_js_type(x: JsValue) {
+    let proto = js_sys::Object::get_prototype_of(&x);
+    let constructor = proto.constructor();
+    let name = constructor.name().as_string().unwrap();
+    let keys = js_sys::Object::keys(&proto);
+    console::log_1(&format!("constructor name: {}", &name).into());
+    // console::log_1(&format!("len: {}", &keys.length()).into());
+    // keys.for_each(&mut |value, x, me| { console::log_1(&format!("{}", &value.as_string().unwrap()).into()) });
+    // console::log_1(&format!("object? {}", &x.is_object()).into());
+}
+
+// #[wasm_bindgen(start)]
 pub fn start() -> Result<(), JsValue> {
     let mut game = LagomGame::new(update);
 
